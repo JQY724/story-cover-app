@@ -1,0 +1,340 @@
+import streamlit as st
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import os
+import io
+from math import sin, cos, pi
+
+st.set_page_config(page_title="粉色 ins 风故事封面生成器", layout="wide")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FONT_PATH = os.path.join(BASE_DIR, "STKAITI.TTF")
+
+# =========================
+# 页面样式
+# =========================
+st.markdown("""
+<style>
+.stApp {
+    background: linear-gradient(180deg, #ffe4ef 0%, #ffd6e8 50%, #fff0f6 100%);
+}
+.block-container {
+    padding-top: 1.2rem;
+    padding-bottom: 2rem;
+}
+.main-title {
+    text-align: center;
+    font-size: 42px;
+    font-weight: 800;
+    color: #d63384;
+    margin-bottom: 8px;
+}
+.sub-title {
+    text-align: center;
+    font-size: 16px;
+    color: #ad5b84;
+    margin-bottom: 24px;
+}
+.stButton > button, .stDownloadButton > button {
+    background: linear-gradient(90deg, #ff88af, #ffb7cc);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-weight: 700;
+}
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #fff3f8 0%, #ffe5f0 100%);
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="main-title">🎀 粉色 ins 风故事封面生成器 🎀</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-title">主图上下文字可编辑，自动居中排版</div>', unsafe_allow_html=True)
+
+# =========================
+# 工具函数
+# =========================
+def load_font(size=40):
+    try:
+        return ImageFont.truetype(FONT_PATH, size=size)
+    except:
+        return ImageFont.load_default()
+
+def create_canvas(template_style="甜粉"):
+    if template_style == "甜粉":
+        bg = Image.new("RGBA", (1080, 1350), (255, 228, 239, 255))
+    elif template_style == "奶油白粉":
+        bg = Image.new("RGBA", (1080, 1350), (255, 246, 249, 255))
+    elif template_style == "ins灰粉":
+        bg = Image.new("RGBA", (1080, 1350), (241, 231, 235, 255))
+    else:
+        bg = Image.new("RGBA", (1080, 1350), (255, 228, 239, 255))
+    return bg
+
+def add_background_decorations(canvas, template_style="甜粉"):
+    draw = ImageDraw.Draw(canvas)
+
+    circles = [
+        (55, 55, 125, 125, (255, 182, 193, 160)),
+        (930, 90, 1015, 175, (255, 195, 210, 160)),
+        (80, 1180, 160, 1260, (255, 210, 222, 160)),
+        (920, 1140, 1010, 1230, (255, 168, 196, 150)),
+    ]
+    for x1, y1, x2, y2, color in circles:
+        draw.ellipse((x1, y1, x2, y2), fill=color)
+
+    for p in [(170, 120), (860, 220), (970, 1080), (140, 980), (540, 90)]:
+        x, y = p
+        draw.ellipse((x, y, x+12, y+12), fill=(255, 255, 255, 170))
+
+    return canvas
+
+def get_text_size(draw, text, font):
+    bbox = draw.textbbox((0, 0), text, font=font)
+    return bbox[2] - bbox[0], bbox[3] - bbox[1]
+
+def draw_center_text(draw, text, center_x, y, font, fill):
+    if not text.strip():
+        return
+    tw, th = get_text_size(draw, text, font)
+    x = center_x - tw // 2
+    draw.text((x, y), text, font=font, fill=fill)
+
+def crop_to_shape(img, shape="矩形", corner_radius=40, add_border=False, border_width=12, border_color=(255,255,255,255)):
+    img = img.convert("RGBA")
+    w, h = img.size
+
+    if shape == "矩形":
+        result = img.copy()
+    else:
+        mask = Image.new("L", (w, h), 0)
+        draw = ImageDraw.Draw(mask)
+
+        if shape == "圆角矩形":
+            draw.rounded_rectangle((0, 0, w, h), radius=corner_radius, fill=255)
+
+        elif shape == "圆形":
+            size = min(w, h)
+            square = img.crop(((w-size)//2, (h-size)//2, (w+size)//2, (h+size)//2))
+            img = square
+            w, h = img.size
+            mask = Image.new("L", (w, h), 0)
+            draw = ImageDraw.Draw(mask)
+            draw.ellipse((0, 0, w, h), fill=255)
+
+        elif shape == "椭圆":
+            draw.ellipse((0, 0, w, h), fill=255)
+
+        elif shape == "爱心":
+            points = []
+            for t in range(360):
+                tt = t * pi / 180
+                x = 16 * sin(tt) ** 3
+                y = 13 * cos(tt) - 5 * cos(2 * tt) - 2 * cos(3 * tt) - cos(4 * tt)
+                px = w / 2 + x * w / 40
+                py = h / 2 - y * h / 40
+                points.append((px, py))
+            draw.polygon(points, fill=255)
+
+        elif shape == "拍立得":
+            draw.rounded_rectangle((0, 0, w, h), radius=corner_radius, fill=255)
+
+        elif shape == "胶片":
+            draw.rounded_rectangle((0, 0, w, h), radius=corner_radius, fill=255)
+
+        else:
+            draw.rectangle((0, 0, w, h), fill=255)
+
+        result = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        result.paste(img, (0, 0), mask)
+
+    if shape == "拍立得":
+        pad_left = 20
+        pad_top = 20
+        pad_right = 20
+        pad_bottom = 90
+        framed = Image.new(
+            "RGBA",
+            (result.size[0] + pad_left + pad_right, result.size[1] + pad_top + pad_bottom),
+            (255,255,255,255)
+        )
+        framed.paste(result, (pad_left, pad_top), result)
+        result = framed
+
+    if shape == "胶片":
+        framed = Image.new("RGBA", (result.size[0] + 30, result.size[1] + 30), (35,35,35,255))
+        framed.paste(result, (15, 15), result)
+        draw2 = ImageDraw.Draw(framed)
+        hole_w = 10
+        hole_h = 18
+        gap = 22
+        for y in range(18, framed.size[1]-18, gap):
+            draw2.rounded_rectangle((4, y, 4+hole_w, y+hole_h), radius=2, fill=(230,230,230,255))
+            draw2.rounded_rectangle((framed.size[0]-14, y, framed.size[0]-4, y+hole_h), radius=2, fill=(230,230,230,255))
+        result = framed
+
+    if add_border and shape not in ["拍立得", "胶片"]:
+        bordered = Image.new(
+            "RGBA",
+            (result.size[0] + border_width*2, result.size[1] + border_width*2),
+            (0,0,0,0)
+        )
+        border_layer = Image.new("RGBA", bordered.size, border_color)
+        bordered.paste(border_layer, (0, 0))
+        bordered.paste(result, (border_width, border_width), result)
+        result = bordered
+
+    return result
+
+def crop_avatar_circle(img, size):
+    img = img.convert("RGBA").resize((size, size))
+    mask = Image.new("L", (size, size), 0)
+    draw = ImageDraw.Draw(mask)
+    draw.ellipse((0, 0, size, size), fill=255)
+    result = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    result.paste(img, (0, 0), mask)
+    return result
+
+# =========================
+# 侧边栏
+# =========================
+st.sidebar.header("上传素材")
+
+template_style = st.sidebar.selectbox("模板风格", ["甜粉", "奶油白粉", "ins灰粉"])
+
+main_uploaded = st.sidebar.file_uploader("上传主图", type=["png", "jpg", "jpeg"])
+avatar_uploaded = st.sidebar.file_uploader("上传头像", type=["png", "jpg", "jpeg"])
+sticker_uploaded = st.sidebar.file_uploader("上传贴纸", type=["png", "jpg", "jpeg"])
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 主图设置")
+main_shape = st.sidebar.selectbox(
+    "主图形状",
+    ["矩形", "圆角矩形", "圆形", "椭圆", "爱心", "拍立得", "胶片"]
+)
+main_width = st.sidebar.slider("主图宽度", 200, 900, 700)
+main_height = st.sidebar.slider("主图高度", 200, 1000, 760)
+corner_radius = st.sidebar.slider("圆角大小", 0, 200, 40)
+add_border = st.sidebar.checkbox("主图添加白边", value=False)
+border_width = st.sidebar.slider("边框宽度", 4, 30, 10)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 上方文字")
+top_text = st.sidebar.text_input("上方文字内容", "今日份小美好")
+top_font_size = st.sidebar.slider("上方文字大小", 20, 100, 48)
+top_text_y_offset = st.sidebar.slider("上方文字上下微调", -200, 200, -70)
+top_text_color = st.sidebar.color_picker("上方文字颜色", "#D63384")
+
+st.sidebar.markdown("### 下方文字")
+bottom_text = st.sidebar.text_input("下方文字内容", "记录生活里的温柔瞬间")
+bottom_font_size = st.sidebar.slider("下方文字大小", 20, 100, 38)
+bottom_text_y_offset = st.sidebar.slider("下方文字上下微调", -200, 200, 35)
+bottom_text_color = st.sidebar.color_picker("下方文字颜色", "#8F5C74")
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 头像设置")
+avatar_size = st.sidebar.slider("头像大小", 60, 220, 120)
+avatar_x = st.sidebar.slider("头像横向位置", 0, 1000, 80)
+avatar_y = st.sidebar.slider("头像纵向位置", 0, 1250, 80)
+
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 贴纸设置")
+sticker_size = st.sidebar.slider("贴纸大小", 40, 300, 120)
+sticker_x = st.sidebar.slider("贴纸横向位置", 0, 1000, 850)
+sticker_y = st.sidebar.slider("贴纸纵向位置", 0, 1250, 150)
+
+# =========================
+# 生成图片
+# =========================
+canvas = create_canvas(template_style)
+canvas = add_background_decorations(canvas, template_style)
+draw = ImageDraw.Draw(canvas)
+
+main_center_x = canvas.size[0] // 2
+
+# 主图默认居中
+if main_uploaded is not None:
+    main_img = Image.open(main_uploaded).convert("RGBA")
+    main_img = main_img.resize((main_width, main_height))
+
+    main_img = crop_to_shape(
+        main_img,
+        shape=main_shape,
+        corner_radius=corner_radius,
+        add_border=add_border,
+        border_width=border_width,
+        border_color=(255, 255, 255, 255)
+    )
+
+    main_x = (canvas.size[0] - main_img.size[0]) // 2
+    main_y = (canvas.size[1] - main_img.size[1]) // 2
+
+    canvas.paste(main_img, (main_x, main_y), main_img)
+
+    # 上方文字：相对主图顶部居中
+    top_font = load_font(top_font_size)
+    draw_center_text(
+        draw,
+        top_text,
+        main_x + main_img.size[0] // 2,
+        main_y + top_text_y_offset,
+        top_font,
+        top_text_color
+    )
+
+    # 下方文字：相对主图底部居中
+    bottom_font = load_font(bottom_font_size)
+    draw_center_text(
+        draw,
+        bottom_text,
+        main_x + main_img.size[0] // 2,
+        main_y + main_img.size[1] + bottom_text_y_offset,
+        bottom_font,
+        bottom_text_color
+    )
+
+else:
+    # 没有主图时文字按页面居中
+    top_font = load_font(top_font_size)
+    bottom_font = load_font(bottom_font_size)
+    draw_center_text(draw, top_text, main_center_x, 180, top_font, top_text_color)
+    draw_center_text(draw, bottom_text, main_center_x, 1120, bottom_font, bottom_text_color)
+
+# 头像
+if avatar_uploaded is not None:
+    avatar = Image.open(avatar_uploaded).convert("RGBA")
+    avatar = crop_avatar_circle(avatar, avatar_size)
+    canvas.paste(avatar, (avatar_x, avatar_y), avatar)
+
+# 贴纸
+if sticker_uploaded is not None:
+    sticker = Image.open(sticker_uploaded).convert("RGBA")
+    sticker = sticker.resize((sticker_size, sticker_size))
+    canvas.paste(sticker, (sticker_x, sticker_y), sticker)
+
+# =========================
+# 预览与下载
+# =========================
+col1, col2 = st.columns([1.05, 0.95])
+
+with col1:
+    st.subheader("预览")
+    st.image(canvas, use_container_width=True)
+
+with col2:
+    st.subheader("说明")
+    st.write("1. 上传主图后，主图会自动居中。")
+    st.write("2. 上方文字和下方文字会相对主图自动居中。")
+    st.write("3. 你可以分别调节上方/下方文字内容、字号、颜色、上下位置。")
+    st.write("4. 头像和贴纸支持自由位置调整。")
+    st.write("5. 字体统一使用项目根目录中的 STKAITI.TTF。")
+
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    byte_im = buf.getvalue()
+
+    st.download_button(
+        label="下载封面图片",
+        data=byte_im,
+        file_name="ins_cover.png",
+        mime="image/png"
+    )
